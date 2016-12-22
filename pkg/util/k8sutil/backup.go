@@ -110,6 +110,20 @@ func CreateAndWaitPVC(kubecli *unversioned.Client, clusterName, ns, pvProvisione
 
 var BackupImage = "quay.io/coreos/etcd-operator:latest"
 
+func PodSpecWithEmptyDir(ps *api.PodSpec) *api.PodSpec {
+	ps.Containers[0].VolumeMounts = []api.VolumeMount{{
+		Name:      backupPVVolName,
+		MountPath: constants.BackupDir,
+	}}
+	ps.Volumes = []api.Volume{{
+		Name: backupPVVolName,
+		VolumeSource: api.VolumeSource{
+			EmptyDir: &api.EmptyDirVolumeSource{},
+		},
+	}}
+	return ps
+}
+
 func PodSpecWithPV(ps *api.PodSpec, clusterName string) *api.PodSpec {
 	ps.Containers[0].VolumeMounts = []api.VolumeMount{{
 		Name:      backupPVVolName,

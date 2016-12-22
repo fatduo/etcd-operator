@@ -54,6 +54,11 @@ func newBackupManager(c Config, b *spec.BackupPolicy, r *spec.RestorePolicy, l *
 }
 
 func (bm *backupManager) setup() error {
+	if bm.s == nil && bm.restorePolicy != nil {
+		bm.logger.Infof("storage is empty, cannot restore from existing backup (%s)", bm.restorePolicy.BackupClusterName)
+		bm.restorePolicy = nil
+	}
+
 	if r := bm.restorePolicy; r != nil {
 		bm.logger.Infof("restoring cluster from existing backup (%s)", r.BackupClusterName)
 		if bm.clusterConfig.Name != r.BackupClusterName {
@@ -70,10 +75,12 @@ func (bm *backupManager) setupStorage(hasExist bool) (s backupstorage.Storage, e
 	b, c := bm.backupPolicy, bm.clusterConfig
 
 	switch b.StorageType {
-	case spec.BackupStorageTypePersistentVolume, spec.BackupStorageTypeDefault:
+	case spec.BackupStorageTypePersistentVolume:
 		s, err = backupstorage.NewPVStorage(c.KubeCli, c.Name, c.Namespace, c.PVProvisioner, *b, hasExist)
 	case spec.BackupStorageTypeS3:
 		s, err = backupstorage.NewS3Storage(c.S3Context, c.KubeCli, c.Name, c.Namespace, *b, hasExist)
+	case spec.BackupStorageTypeDefault:
+		return nil, nil
 	}
 	return s, err
 }
@@ -85,10 +92,12 @@ func (bm *backupManager) runSidecar() error {
 		return err
 	}
 	switch bm.backupPolicy.StorageType {
-	case spec.BackupStorageTypeDefault, spec.BackupStorageTypePersistentVolume:
+	case spec.BackupStorageTypePersistentVolume:
 		podSpec = k8sutil.PodSpecWithPV(podSpec, c.Name)
 	case spec.BackupStorageTypeS3:
 		podSpec = k8sutil.PodSpecWithS3(podSpec, c.S3Context)
+	case spec.BackupStorageTypeDefault:
+		podSpec = k8sutil.PodSpecWithEmptyDir(podSpec)
 	}
 	err = k8sutil.CreateBackupReplicaSetAndService(c.KubeCli, c.Name, c.Namespace, *podSpec)
 	if err != nil {
@@ -106,7 +115,9 @@ func (bm *backupManager) cleanup() error {
 	}
 	bm.logger.Infof("backup replica set and service deleted")
 
-	err = bm.s.Delete()
+	if bm.s != nil {
+		err = bm.s.Delete()
+	}
 	if err != nil {
 		return fmt.Errorf("fail to delete store: %v", err)
 	}
