@@ -20,7 +20,9 @@ import (
 )
 
 type Member struct {
-	Name string
+	Name      string
+	Namespace string
+
 	// ID field can be 0, which is unknown ID.
 	// We know the ID of a member when we get the member information from etcd,
 	// but not from Kubernetes pod list.
@@ -37,7 +39,7 @@ func (m *Member) ClientAddr() string {
 		return strings.Join(m.ClientURLs, ",")
 	}
 
-	return fmt.Sprintf("http://%s:2379", m.Name)
+	return fmt.Sprintf("http://%s.%s.svc:2379", m.Name, m.Namespace)
 }
 
 func (m *Member) PeerAddr() string {
@@ -45,7 +47,7 @@ func (m *Member) PeerAddr() string {
 		return strings.Join(m.PeerURLs, ",")
 	}
 
-	return fmt.Sprintf("http://%s:2380", m.Name)
+	return fmt.Sprintf("http://%s.%s.svc:2380", m.Name, m.Namespace)
 }
 
 type MemberSet map[string]*Member

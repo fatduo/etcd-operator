@@ -47,7 +47,7 @@ func (c *Cluster) reconcile(pods []*api.Pod) error {
 	case len(pods) != c.spec.Size:
 		running := etcdutil.MemberSet{}
 		for _, pod := range pods {
-			m := &etcdutil.Member{Name: pod.Name}
+			m := &etcdutil.Member{Name: pod.Name, Namespace: pod.Namespace}
 			if c.spec.SelfHosted != nil {
 				m.ClientURLs = []string{"http://" + pod.Status.PodIP + ":2379"}
 				m.PeerURLs = []string{"http://" + pod.Status.PodIP + ":2380"}
@@ -156,7 +156,7 @@ func (c *Cluster) addOneMember() error {
 	defer etcdcli.Close()
 
 	newMemberName := fmt.Sprintf("%s-%04d", c.Name, c.idCounter)
-	newMember := &etcdutil.Member{Name: newMemberName}
+	newMember := &etcdutil.Member{Name: newMemberName, Namespace: c.Namespace}
 	ctx, _ := context.WithTimeout(context.Background(), constants.DefaultRequestTimeout)
 	resp, err := etcdcli.MemberAdd(ctx, []string{newMember.PeerAddr()})
 	if err != nil {
@@ -230,7 +230,7 @@ func (c *Cluster) disasterRecovery(left etcdutil.MemberSet) error {
 	backupNow := false
 	if len(left) > 0 {
 		c.logger.Infof("pods are still running (%v). Will try to make a latest backup from one of them.", left)
-		err := RequestBackupNow(c.KubeCli.RESTClient.Client, k8sutil.MakeBackupHostPort(c.Name))
+		err := RequestBackupNow(c.KubeCli.RESTClient.Client, k8sutil.MakeBackupHostPort(c.Name, c.Namespace))
 		if err != nil {
 			c.logger.Errorln(err)
 		} else {
@@ -242,7 +242,7 @@ func (c *Cluster) disasterRecovery(left etcdutil.MemberSet) error {
 	} else {
 		// We don't return error if backupnow failed. Instead, we ask if there is previous backup.
 		// If so, we can still continue. Otherwise, it's fatal error.
-		exist, err := checkBackupExist(c.KubeCli.RESTClient.Client, k8sutil.MakeBackupHostPort(c.Name), c.spec.Version)
+		exist, err := checkBackupExist(c.KubeCli.RESTClient.Client, k8sutil.MakeBackupHostPort(c.Name, c.Namespace), c.spec.Version)
 		if err != nil {
 			c.logger.Errorln(err)
 			return err
@@ -311,7 +311,7 @@ func pickOneOldMember(pods []*api.Pod, newVersion string) *etcdutil.Member {
 		if k8sutil.GetEtcdVersion(pod) == newVersion {
 			continue
 		}
-		return &etcdutil.Member{Name: pod.Name}
+		return &etcdutil.Member{Name: pod.Name, Namespace: pod.Namespace}
 	}
 	return nil
 }

@@ -240,7 +240,7 @@ func isFatalError(err error) bool {
 
 func (c *Cluster) makeSeedMember() *etcdutil.Member {
 	etcdName := fmt.Sprintf("%s-%04d", c.Name, c.idCounter)
-	return &etcdutil.Member{Name: etcdName}
+	return &etcdutil.Member{Name: etcdName, Namespace: c.Namespace}
 }
 
 func (c *Cluster) startSeedMember(recoverFromBackup bool) error {
@@ -297,6 +297,7 @@ func (c *Cluster) updateMembers(etcdcli *clientv3.Client) error {
 
 		c.members[m.Name] = &etcdutil.Member{
 			Name:       m.Name,
+			Namespace:  c.Namespace,
 			ID:         m.ID,
 			ClientURLs: m.ClientURLs,
 			PeerURLs:   m.PeerURLs,
@@ -379,7 +380,7 @@ func (c *Cluster) createPodAndService(members etcdutil.MemberSet, m *etcdutil.Me
 	}
 	pod := k8sutil.MakeEtcdPod(m, members.PeerURLPairs(), c.Name, state, token, c.spec)
 	if needRecovery {
-		k8sutil.AddRecoveryToPod(pod, c.Name, m.Name, token, c.spec)
+		k8sutil.AddRecoveryToPod(pod, c.Name, m.Name, c.Namespace, token, c.spec)
 	}
 	_, err := c.KubeCli.Pods(c.Namespace).Create(pod)
 	return err

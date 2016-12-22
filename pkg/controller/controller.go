@@ -139,32 +139,37 @@ func (c *Controller) Run() error {
 			}
 
 			clusterName := event.Object.ObjectMeta.Name
+			clusterNamespace := event.Object.ObjectMeta.Namespace
+			key := clusterNamespace + "/" + clusterName
+
 			switch event.Type {
 			case "ADDED":
 				stopC := make(chan struct{})
-				nc, err := cluster.New(c.makeClusterConfig(clusterName), event.Object.Spec, stopC, &c.waitCluster)
+				nc, err := cluster.New(c.makeClusterConfig(clusterName, clusterNamespace), event.Object.Spec, stopC, &c.waitCluster)
 				if err != nil {
-					c.logger.Errorf("cluster (%q) is dead: %v", clusterName, err)
+					c.logger.Errorf("cluster (%q) is dead: %v", key, err)
 					continue
 				}
 
-				c.stopChMap[clusterName] = stopC
-				c.clusters[clusterName] = nc
+				c.stopChMap[key] = stopC
+				c.clusters[key] = nc
 
 				analytics.ClusterCreated()
 			case "MODIFIED":
-				if c.clusters[clusterName] == nil {
-					c.logger.Warningf("ignore modification: cluster %q not found (or dead)", clusterName)
+				if c.clusters[key] == nil {
+					c.logger.Warningf("ignore modification: cluster %q not found (or dead)", key)
 					break
 				}
-				c.clusters[clusterName].Update(event.Object.Spec)
+				c.clusters[key].Update(event.Object.Spec)
 			case "DELETED":
-				if c.clusters[clusterName] == nil {
-					c.logger.Warningf("ignore deletion: cluster %q not found (or dead)", clusterName)
+				if c.clusters[key] == nil {
+					c.logger.Warningf("ignore deletion: cluster %q not found (or dead)", key)
 					break
 				}
-				c.clusters[clusterName].Delete()
-				delete(c.clusters, clusterName)
+
+				c.clusters[key].Delete()
+				delete(c.clusters, key)
+
 				analytics.ClusterDeleted()
 			}
 		}
@@ -174,7 +179,7 @@ func (c *Controller) Run() error {
 
 func (c *Controller) findAllClusters() (string, error) {
 	c.logger.Info("finding existing clusters...")
-	resp, err := k8sutil.ListETCDCluster(c.MasterHost, c.Namespace, c.KubeCli.RESTClient.Client)
+	resp, err := k8sutil.ListAllNSETCDCluster(c.MasterHost, c.KubeCli.RESTClient.Client)
 	if err != nil {
 		return "", err
 	}
@@ -185,22 +190,26 @@ func (c *Controller) findAllClusters() (string, error) {
 	}
 	for _, item := range list.Items {
 		clusterName := item.Name
+		clusterNamespace := item.Namespace
+		key := clusterNamespace + "/" + clusterName
+
 		stopC := make(chan struct{})
-		nc, err := cluster.Restore(c.makeClusterConfig(clusterName), item.Spec, stopC, &c.waitCluster)
+		nc, err := cluster.Restore(c.makeClusterConfig(clusterName, clusterNamespace), item.Spec, stopC, &c.waitCluster)
 		if err != nil {
-			c.logger.Errorf("cluster (%q) is dead: %v", clusterName, err)
+			c.logger.Errorf("cluster (%q) is dead: %v", key, err)
 			continue
 		}
-		c.stopChMap[clusterName] = stopC
-		c.clusters[clusterName] = nc
+
+		c.stopChMap[key] = stopC
+		c.clusters[key] = nc
 	}
 	return list.ListMeta.ResourceVersion, nil
 }
 
-func (c *Controller) makeClusterConfig(clusterName string) cluster.Config {
+func (c *Controller) makeClusterConfig(clusterName string, clusterNamespace string) cluster.Config {
 	return cluster.Config{
 		Name:          clusterName,
-		Namespace:     c.Namespace,
+		Namespace:     clusterNamespace,
 		PVProvisioner: c.PVProvisioner,
 		S3Context:     c.S3Context,
 		KubeCli:       c.KubeCli,
@@ -245,12 +254,11 @@ func (c *Controller) createTPR() error {
 		return err
 	}
 
-	return k8sutil.WaitEtcdTPRReady(c.KubeCli.Client, 3*time.Second, 30*time.Second, c.MasterHost, c.Namespace)
+	return k8sutil.WaitEtcdTPRReady(c.KubeCli.Client, 3*time.Second, 30*time.Second, c.MasterHost)
 }
 
 func (c *Controller) monitor(watchVersion string) (<-chan *Event, <-chan error) {
 	host := c.MasterHost
-	ns := c.Namespace
 	httpClient := c.KubeCli.Client
 
 	eventCh := make(chan *Event)
@@ -261,7 +269,7 @@ func (c *Controller) monitor(watchVersion string) (<-chan *Event, <-chan error) 
 		defer close(eventCh)
 
 		for {
-			resp, err := k8sutil.WatchETCDCluster(host, ns, httpClient, watchVersion)
+			resp, err := k8sutil.WatchAllNSETCDCluster(host, httpClient, watchVersion)
 			if err != nil {
 				errCh <- err
 				return

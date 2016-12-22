@@ -65,7 +65,7 @@ func GetPodNames(pods []*api.Pod) []string {
 	return res
 }
 
-func makeRestoreInitContainerSpec(backupAddr, name, token, version string) string {
+func makeRestoreInitContainerSpec(backupAddr, memberName, namespace, token, version string) string {
 	spec := []api.Container{
 		{
 			Name:  "fetch-backup",
@@ -85,10 +85,10 @@ func makeRestoreInitContainerSpec(backupAddr, name, token, version string) strin
 				"/bin/sh", "-c",
 				fmt.Sprintf("ETCDCTL_API=3 etcdctl snapshot restore %[1]s"+
 					" --name %[2]s"+
-					" --initial-cluster %[2]s=http://%[2]s:2380"+
-					" --initial-cluster-token %[3]s"+
-					" --initial-advertise-peer-urls http://%[2]s:2380"+
-					" --data-dir %[4]s", backupFile, name, token, dataDir),
+					" --initial-cluster %[2]s=http://%[2]s.%[3]s.svc:2380"+
+					" --initial-cluster-token %[4]s"+
+					" --initial-advertise-peer-urls http://%[2]s.%[3]s.svc:2380"+
+					" --data-dir %[5]s", backupFile, memberName, namespace, token, dataDir),
 			},
 			VolumeMounts: []api.VolumeMount{
 				{Name: "etcd-data", MountPath: etcdDir},
@@ -110,8 +110,8 @@ func GetNodePortString(srv *api.Service) string {
 	return fmt.Sprint(srv.Spec.Ports[0].NodePort)
 }
 
-func MakeBackupHostPort(clusterName string) string {
-	return fmt.Sprintf("%s:%d", MakeBackupName(clusterName), constants.DefaultBackupPodHTTPPort)
+func MakeBackupHostPort(clusterName, namespace string) string {
+	return fmt.Sprintf("%s.%s.svc:%d", MakeBackupName(clusterName), namespace, constants.DefaultBackupPodHTTPPort)
 }
 
 func PodWithAddMemberInitContainer(p *api.Pod, endpoints []string, name string, peerURLs []string, cs *spec.ClusterSpec) *api.Pod {
@@ -279,9 +279,9 @@ func makeEtcdNodePortService(etcdName, clusterName string) *api.Service {
 	return svc
 }
 
-func AddRecoveryToPod(pod *api.Pod, clusterName, name, token string, cs *spec.ClusterSpec) {
+func AddRecoveryToPod(pod *api.Pod, clusterName, memberName, namespace, token string, cs *spec.ClusterSpec) {
 	pod.Annotations[k8sv1api.PodInitContainersAnnotationKey] =
-		makeRestoreInitContainerSpec(MakeBackupHostPort(clusterName), name, token, cs.Version)
+		makeRestoreInitContainerSpec(MakeBackupHostPort(clusterName, namespace), memberName, namespace, token, cs.Version)
 }
 
 func MakeEtcdPod(m *etcdutil.Member, initialCluster []string, clusterName, state, token string, cs *spec.ClusterSpec) *api.Pod {
@@ -390,14 +390,24 @@ func ListETCDCluster(host, ns string, httpClient *http.Client) (*http.Response, 
 		host, ns))
 }
 
+func ListAllNSETCDCluster(host string, httpClient *http.Client) (*http.Response, error) {
+	return httpClient.Get(fmt.Sprintf("%s/apis/coreos.com/v1/etcdclusters",
+		host))
+}
+
 func WatchETCDCluster(host, ns string, httpClient *http.Client, resourceVersion string) (*http.Response, error) {
 	return httpClient.Get(fmt.Sprintf("%s/apis/coreos.com/v1/namespaces/%s/etcdclusters?watch=true&resourceVersion=%s",
 		host, ns, resourceVersion))
 }
 
-func WaitEtcdTPRReady(httpClient *http.Client, interval, timeout time.Duration, host, ns string) error {
+func WatchAllNSETCDCluster(host string, httpClient *http.Client, resourceVersion string) (*http.Response, error) {
+	return httpClient.Get(fmt.Sprintf("%s/apis/coreos.com/v1/etcdclusters?watch=true&resourceVersion=%s",
+		host, resourceVersion))
+}
+
+func WaitEtcdTPRReady(httpClient *http.Client, interval, timeout time.Duration, host string) error {
 	return retryutil.Retry(interval, int(timeout/interval), func() (bool, error) {
-		resp, err := ListETCDCluster(host, ns, httpClient)
+		resp, err := ListAllNSETCDCluster(host, httpClient)
 		if err != nil {
 			return false, err
 		}
